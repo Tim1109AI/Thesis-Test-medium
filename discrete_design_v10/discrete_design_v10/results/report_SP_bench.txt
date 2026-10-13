@@ -1,0 +1,13 @@
+
+===== benchmark setting (T2, K = 16, N = 3, S_max = 12, R_th = 2, Q = 50): 15 common runs (SP: 15, sparse_bf: 15, SP@SC: 15, J: 15, J@SC: 15)
+sparse_bf, J (the current framework) and J@SC (stream clustering on its streams): stored runs of Fig. 5.10
+-- by M
+      M    n        SP sparse_bf     SP@SC         J      J@SC      SP-sparse_bf          SP-SP@SC   QoS met SP/sparse_bf/SP@SC/J/J@SC
+    100    5     71.99     63.08     43.60     73.51     44.18    +8.92± 4.20      +28.39± 3.17      5/5/5/5/5
+    300    5     78.76     75.09     57.98     81.95     54.38    +3.67± 5.50      +20.78± 5.33      5/5/5/5/5
+    500    5     85.43     81.03     64.61     88.72     64.51    +4.40± 4.25      +20.82± 4.16      5/5/5/5/5
+    all   15     78.73     73.07     55.40     81.39     54.36    +5.66± 2.58      +23.33± 2.49      15/15/15/15/15
+-- SP: mean served streams 11.00, group-common served 4.20, private served 5.80; BS-specific in 0/15 runs; per run, carried by a subset of the BSs: group-common 0.00, private 0.00
+-- SP: shares of the sum rate over its 15 runs meeting the QoS: super-common 16.3%, group-common 9.6%, private 74.0%
+
+written /home/user/Thesis-Test-medium/discrete_design_v10/discrete_design_v10/results/SP__report_bench.json

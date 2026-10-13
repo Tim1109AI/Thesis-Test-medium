@@ -1,0 +1,19 @@
+B = 16 BSs over 600 m x 600 m, K = 60, N = 4, S_max = 8: 21 distinct streams (15 private, 5 group-common), rule layered
+private layer: 15 private streams, each carried by s = 7 of the 16 BSs
+core users: 15; BSs per core private stream: [0, 0, 0, 0, 0, 0, 0, 15] (count by number of BSs); distance rank of a carrying BS among the BSs of its UE: [13, 14, 14, 13, 14, 12, 12, 4, 1, 2, 2, 0, 2, 1, 1, 0]
+  BS 0 at (   76,  116): 8 streams (0 group-common, 7 private), serves 7 UEs at median distance 203 m (all UEs: 364 m)
+  BS 1 at (   43,  265): 8 streams (0 group-common, 7 private), serves 7 UEs at median distance 183 m (all UEs: 364 m)
+  BS 2 at (   58,  368): 8 streams (0 group-common, 7 private), serves 7 UEs at median distance 183 m (all UEs: 361 m)
+  BS 3 at (  104,  517): 8 streams (0 group-common, 7 private), serves 7 UEs at median distance 148 m (all UEs: 385 m)
+  BS 4 at (  229,   32): 8 streams (1 group-common, 6 private), serves 9 UEs at median distance 103 m (all UEs: 322 m)
+  BS 5 at (  248,  228): 8 streams (0 group-common, 7 private), serves 7 UEs at median distance 212 m (all UEs: 239 m)
+  BS 6 at (  210,  401): 8 streams (0 group-common, 7 private), serves 7 UEs at median distance 190 m (all UEs: 278 m)
+  BS 7 at (  207,  521): 8 streams (0 group-common, 7 private), serves 7 UEs at median distance 201 m (all UEs: 317 m)
+  BS 8 at (  342,   66): 8 streams (0 group-common, 7 private), serves 7 UEs at median distance 200 m (all UEs: 283 m)
+  BS 9 at (  348,  204): 8 streams (0 group-common, 7 private), serves 7 UEs at median distance 138 m (all UEs: 249 m)
+  BS 10 at (  398,  355): 8 streams (0 group-common, 7 private), serves 7 UEs at median distance 187 m (all UEs: 215 m)
+  BS 11 at (  374,  568): 8 streams (0 group-common, 7 private), serves 7 UEs at median distance 151 m (all UEs: 355 m)
+  BS 12 at (  567,   95): 8 streams (3 group-common, 4 private), serves 24 UEs at median distance 186 m (all UEs: 394 m)
+  BS 13 at (  529,  205): 8 streams (1 group-common, 6 private), serves 17 UEs at median distance 104 m (all UEs: 305 m)
+  BS 14 at (  494,  417): 8 streams (1 group-common, 6 private), serves 8 UEs at median distance 138 m (all UEs: 294 m)
+  BS 15 at (  526,  490): 8 streams (1 group-common, 6 private), serves 8 UEs at median distance 100 m (all UEs: 368 m)

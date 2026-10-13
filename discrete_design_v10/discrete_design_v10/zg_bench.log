@@ -1,0 +1,29 @@
+ZG__T2__bench: 15 runs to do (0 done) -> /home/user/Thesis-Test-medium/discrete_design_v10/discrete_design_v10/results/ZG__T2__bench.jsonl
+ZG@SC__T2__bench: 15 runs to do (0 done) -> /home/user/Thesis-Test-medium/discrete_design_v10/discrete_design_v10/results/ZG@SC__T2__bench.jsonl
+  [1/15] T2 bench_M100 drop 801 R_th 2: rate 62.64, 9 streams  (50 CPU-s, 54 s elapsed)
+  [2/15] T2 bench_M100 drop 802 R_th 2: rate 70.14, 10 streams  (51 CPU-s, 116 s elapsed)
+  [1/15] T2 bench_M100 drop 801 R_th 2: rate 45.86, 17 streams BS-specific  (117 CPU-s, 149 s elapsed)
+  [3/15] T2 bench_M100 drop 803 R_th 2: rate 58.49, 9 streams  (39 CPU-s, 195 s elapsed)
+  [2/15] T2 bench_M100 drop 802 R_th 2: rate 54.18, 17 streams BS-specific  (170 CPU-s, 257 s elapsed)
+  [4/15] T2 bench_M100 drop 804 R_th 2: rate 61.57, 9 streams  (50 CPU-s, 300 s elapsed)
+  [5/15] T2 bench_M100 drop 805 R_th 2: rate 77.88, 12 streams  (49 CPU-s, 399 s elapsed)
+  [6/15] T2 bench_M300 drop 801 R_th 2: rate 72.78, 9 streams  (45 CPU-s, 492 s elapsed)
+  [3/15] T2 bench_M100 drop 804 R_th 2: rate 53.92, 18 streams BS-specific  (160 CPU-s, 590 s elapsed)
+  [7/15] T2 bench_M300 drop 802 R_th 2: rate 87.20, 10 streams  (53 CPU-s, 600 s elapsed)
+  [4/15] T2 bench_M100 drop 803 R_th 2: rate 49.56, 20 streams BS-specific  (234 CPU-s, 630 s elapsed)
+  [8/15] T2 bench_M300 drop 803 R_th 2: rate 70.53, 9 streams  (53 CPU-s, 709 s elapsed)
+  [9/15] T2 bench_M300 drop 804 R_th 2: rate 75.66, 9 streams  (45 CPU-s, 803 s elapsed)
+  [10/15] T2 bench_M300 drop 805 R_th 2: rate 82.24, 12 streams  (64 CPU-s, 938 s elapsed)
+  [5/15] T2 bench_M300 drop 801 R_th 2: rate 62.08, 17 streams BS-specific  (156 CPU-s, 956 s elapsed)
+  [11/15] T2 bench_M500 drop 801 R_th 2: rate 78.01, 9 streams  (49 CPU-s, 1021 s elapsed)
+  [12/15] T2 bench_M500 drop 802 R_th 2: rate 86.25, 10 streams  (60 CPU-s, 1114 s elapsed)
+  [6/15] T2 bench_M100 drop 805 R_th 2: rate 56.65, 21 streams BS-specific  (320 CPU-s, 1169 s elapsed)
+  [13/15] T2 bench_M500 drop 803 R_th 2: rate 67.80, 9 streams  (43 CPU-s, 1179 s elapsed)
+  [7/15] T2 bench_M300 drop 802 R_th 2: rate 71.15, 17 streams BS-specific  (155 CPU-s, 1194 s elapsed)
+  [14/15] T2 bench_M500 drop 804 R_th 2: rate 74.55, 9 streams  (51 CPU-s, 1257 s elapsed)
+  [15/15] T2 bench_M500 drop 805 R_th 2: rate 90.05, 12 streams  (56 CPU-s, 1346 s elapsed)
+DONE
+  [8/15] T2 bench_M300 drop 804 R_th 2: rate 65.04, 18 streams BS-specific  (141 CPU-s, 1388 s elapsed)
+  [9/15] T2 bench_M300 drop 803 R_th 2: rate 52.16, 20 streams BS-specific  (208 CPU-s, 1438 s elapsed)
+/usr/lib/python3.13/multiprocessing/resource_tracker.py:479: UserWarning: resource_tracker: There appear to be 6 leaked semaphore objects to clean up at shutdown: {'/mp-lld1g_3o', '/mp-a0ez8car', '/mp-uaezpol9', '/mp-c1qjmnvo', '/mp-fuiv8a90', '/mp-5rnmiwor'}
+  warnings.warn(

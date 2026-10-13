@@ -1,0 +1,678 @@
+diff -ruN -x __pycache__ code/algo.py code/algo.py
+--- code/algo.py	2026-10-13 00:53:09.000000000 +0000
++++ code/algo.py	2026-10-13 06:12:50.500986880 +0000
+@@ -521,7 +521,31 @@
+     return H_.scale_to_power(Wb, p)
+ 
+ 
++def init_core_mask(H, d, p):
++    """init_core for a BS-specific association (d.bsmask): the private stream of each core user is the regularized ZF
++    direction over the antennas of the BSs that carry it only (the other served core private streams' channels on
++    those antennas, the same regularization as init_core), instead of the direction over all BN antennas with the
++    blocks of the other BSs zeroed. Equal to init_core when every BS carries every stream. (Option, off by default.)"""
++    if getattr(d, 'bsmask', None) is None:
++        return init_core(H, d, p)
++    N, B = p['N'], p['B']
++    W = init_core(H, d, p)
++    pw = np.sum(np.abs(W) ** 2, axis=0)
++    base = [k for k in d.core if (1 + d.G + k) in d.col]
++    if not base:
++        return W
++    alpha = len(base) / (B * p['Pmax'])
++    for i, k in enumerate(base):
++        c = d.col[1 + d.G + k]
++        ant = np.concatenate([np.arange(b * N, (b + 1) * N) for b in range(B) if d.bsmask[b, c]])
++        Hp = H[base][:, ant]
++        v = np.linalg.solve(Hp.conj().T @ Hp + alpha * np.eye(len(ant)), Hp.conj().T)[:, i]
++        W[:, c] = 0.0; W[ant, c] = v / np.linalg.norm(v) * math.sqrt(pw[c])
++    return H_.scale_to_power(W, p)
++
++
+ INITS['core'] = init_core
++INITS['core_mask'] = init_core_mask
+ INITS['core_mf'] = lambda H, d, p: init_core(H, d, p, mf=True)
+ INITS['bn'] = init_bn
+ INITS['zf'] = init_zf
+diff -ruN -x __pycache__ code/layered.py code/layered.py
+--- code/layered.py	1970-01-01 00:00:00.000000000 +0000
++++ code/layered.py	2026-10-13 09:32:26.196449065 +0000
+@@ -0,0 +1,105 @@
++"""Discrete design with a stream set per BS (design round v10, BRIEF.md): the layered design.
++
++    design(net, p)          the design (harness variant SP)
++    design_1layer(net, p)   its 1-layer RSMA counterpart: the same private layer, no group layer (variant SP1)
++
++1. Order. The users in the order of semi-orthogonal user selection (SUS) on the stacked direct channels, as in the
++   thesis (hrs.sus): c_1, ..., c_|C|, |C| = min(K, BN).
++2. Private layer. The private streams of the first n users of the order, the stream of c_i carried by the s BSs with
++   the largest direct-channel energy to c_i among the BSs with a free fronthaul slot (each BS keeps one of its S_max
++   slots for the super-common stream). (n, s) maximize the zero-forcing sum rate of this layer,
++       R_ZF(n, s) = sum_i log2(1 + (P/n) / [(H_i H_i^H)^-1]_ii),   P = B P_max,
++   H_i the direct channels of c_1..c_n on the antennas of the BSs that carry c_i's stream (R_ZF = -inf if those BSs
++   have fewer than n antennas: the stream cannot be zero-forced), over n = 1..|C| and s = 1..B (ties: the larger n,
++   then the larger s).
++3. Groups. Every UE without a private stream joins the private-layer user with the most correlated direct channel;
++   every private-layer user with at least one follower heads a group (disjoint, sizes 2..K-1, at most K/2 groups).
++4. Group layer. Every BS fills the slots left by the private layer with group-common streams, in decreasing order
++   of its direct-channel energy to the weakest member of the group.
++5. Every BS carries the super-common stream.
++Deterministic, from the direct channels and the settings (B, N, K, S_max, P_max) only.
++"""
++import numpy as np
++import hrs as H_
++
++
++def bs_energy(Hd, B, N):
++    """E[k, b] = ||h_{k,b}||^2: direct-channel energy from BS b to UE k (noise-normalized channels)."""
++    return np.stack([np.sum(np.abs(Hd[:, b * N:(b + 1) * N]) ** 2, axis=1) for b in range(B)], axis=1)
++
++
++def zf_rate(Hd, users, carriers, N, P):
++    """ZF sum rate of the private streams of `users`, the stream of user k precoded on the antennas of the BSs
++    carriers[k], with the power P shared equally; -inf if a stream cannot be zero-forced."""
++    n = len(users); r = 0.0
++    for i, k in enumerate(users):
++        ant = np.concatenate([np.arange(b * N, (b + 1) * N) for b in carriers[k]])
++        if len(ant) < n:
++            return -np.inf
++        Hk = Hd[users][:, ant]
++        try:
++            g = 1.0 / max(np.real(np.linalg.inv(Hk @ Hk.conj().T)[i, i]), 1e-300)
++        except np.linalg.LinAlgError:
++            return -np.inf
++        r += np.log2(1 + P / n * g)
++    return r
++
++
++def private_layer(Hd, p, order, E):
++    """Steps 1-2: (users of the private layer, their carrying BSs, s)."""
++    B, N, S = p['B'], p['N'], p['Smax']
++    P = B * p['Pmax']
++    best = None
++    for s in range(1, B + 1):
++        load = np.zeros(B, int); car = {}
++        for n, k in enumerate(order, 1):
++            bs = [b for b in np.argsort(-E[k], kind='stable') if load[b] < S - 1][:s]
++            if len(bs) < s:
++                break
++            car[k] = bs; load[bs] += 1
++            r = zf_rate(Hd, order[:n], car, N, P)
++            if best is None or r > best[0] + 1e-9 or (abs(r - best[0]) <= 1e-9 and (n, s) > (len(best[1]), best[3])):
++                best = (r, order[:n], dict(car), s)
++    return best[1], best[2], best[3]
++
++
++def design(net, p, one_layer=False):
++    K, B, N, S = p['K'], p['B'], p['N'], p['Smax']
++    Hd = net['Hd']
++    E = bs_energy(Hd, B, N)
++    order = H_.sus(Hd, p['BN'])                                   # step 1
++    core, car, s = private_layer(Hd, p, order, E)                 # step 2
++    groups = []
++    if not one_layer:                                             # step 3
++        energy = np.sum(np.abs(Hd) ** 2, axis=1)
++        Hn = Hd / np.sqrt(energy)[:, None]
++        corr = np.abs(Hn @ Hn.conj().T) ** 2
++        follow = {c: [] for c in core}
++        for k in range(K):
++            if k not in core:
++                follow[core[int(np.argmax(corr[k, core]))]].append(k)
++        groups = [[c] + follow[c] for c in core if follow[c]]
++    G = len(groups)
++    sets = [[0] for _ in range(B)]                                # step 5
++    for k in core:
++        for b in car[k]:
++            sets[b].append(1 + G + k)
++    weakest = {1 + g: E[groups[g]].min(0) for g in range(G)}      # step 4
++    for b in range(B):
++        sets[b] += sorted(weakest, key=lambda j: -weakest[j][b])[:S - len(sets[b])]
++    served = sorted(set().union(*sets))
++    d = H_.Design(groups, served, K)
++    d.core = list(core)
++    d.rule = 'layered' + ('_1layer' if one_layer else '')
++    others = [k for k in range(K) if k not in core]
++    d.priority = [0] + [1 + G + k for k in core] + sorted(weakest, key=lambda j: (-len(groups[j - 1]), j)) \
++        + [1 + G + k for k in sorted(others, key=lambda k: (-E[k].sum(), k))]
++    d.layer = dict(n_private=len(core), s=s)
++    if any(set(x) != set(served) for x in sets):
++        d.bsmask = np.array([[j in sets[b] for j in d.served] for b in range(B)])
++        d.bs_sets = [sorted(x) for x in sets]
++    return d
++
++
++def design_1layer(net, p):
++    return design(net, p, one_layer=True)
+diff -ruN -x __pycache__ code/perbs.py code/perbs.py
+--- code/perbs.py	1970-01-01 00:00:00.000000000 +0000
++++ code/perbs.py	2026-10-13 09:34:18.128444038 +0000
+@@ -0,0 +1,351 @@
++"""The other discrete designs tried in design round v10 (BRIEF.md; DESIGN.md, "Other methods tried"), kept so that
++every run in results/ can be reproduced. The final design is in code/layered.py.
++
++  tiered        TA   every BS fills its slots tier by tier (core privates, group-common, other privates), within a
++                     tier by its direct-channel energy to the stream's weakest decoder
++  cluster       TB   every BS serves clusters (core private followed by the core user's group-common stream)
++  coreonly      TC   TA without private streams of non-core UEs
++  dof           DF   private layer by the spatial DoF under the fronthaul (dof_split), groups on the free slots
++                DG   (dof_small) DF with DoF ties broken towards fewer BSs per stream
++                DFF  (dof_fill) DF, then private streams of the other UEs in the slots still free
++  dof_zf        ZG   DF on the users of greedy ZF user selection (hrs.zf_greedy)
++  zfs           ZS   greedy ZF selection with s BSs per stream, s by the ZF sum rate
++  sus_zf        SZ   the private layer of the final design with the thesis' groups (sus_zf_regroup = the final
++                     design, verified identical to layered.design on every configuration of the harness)
++Each function takes one_layer=True for its 1-layer counterpart (no group-common streams).
++"""
++import numpy as np
++import hrs as H_
++
++
++def bs_energy(net, p):
++    """E[k, b] = ||h_{k,b}||^2, the direct-channel energy from BS b to UE k (noise-normalized)."""
++    N, B = p['N'], p['B']
++    Hd = net['Hd']
++    return np.stack([np.sum(np.abs(Hd[:, b * N:(b + 1) * N]) ** 2, axis=1) for b in range(B)], axis=1)
++
++
++def _finish(groups, tiers, aff, p, core, pr, rule):
++    """Every BS carries the super-common stream and fills its remaining slots tier by tier, within a tier in
++    decreasing order of its affinity to the stream; the served streams are those carried by some BS."""
++    K, B, S = p['K'], p['B'], p['Smax']
++    sets = []
++    for b in range(B):
++        lst = []
++        for t in tiers:
++            lst += sorted(t, key=lambda j: -aff(j, b))      # stable: ties keep the tier order
++        sets.append(lst[:S])
++    served = sorted(set().union(*sets))
++    d = H_.Design(groups, served, K)
++    d.core = [k for k in core if (1 + d.G + k) in d.col]
++    d.priority = pr; d.rule = rule
++    if any(set(s) != set(served) for s in sets):
++        d.bsmask = np.array([[j in sets[b] for j in d.served] for b in range(B)])
++        d.bs_sets = [sorted(s) for s in sets]
++    return d
++
++
++def tiered(net, p, one_layer=False):
++    K = p['K']
++    order, groups, energy, _ = H_.joint_structure(net['Hd'], p, 'sus')
++    if one_layer: groups = []
++    G = len(groups)
++    pr = H_.priority_list(order, groups, energy, K, 'private_first')
++    E = bs_energy(net, p)
++    dec = H_.Design(groups, pr, K).decoders
++    aff = lambda j, b: np.min(E[dec[j], b])
++    core_priv = [1 + G + k for k in order]
++    grp = [j for j in pr if 1 <= j <= G]
++    other = [j for j in pr if j > G and j not in core_priv]
++    return _finish(groups, [[0], core_priv, grp, other], aff, p, order, pr, 'tiered')
++
++
++def tiered_1layer(net, p):
++    return tiered(net, p, one_layer=True)
++
++
++def _parts(net, p, one_layer=False):
++    K = p['K']
++    order, groups, energy, _ = H_.joint_structure(net['Hd'], p, 'sus')
++    if one_layer: groups = []
++    G = len(groups)
++    pr = H_.priority_list(order, groups, energy, K, 'private_first')
++    E = bs_energy(net, p)
++    dec = H_.Design(groups, pr, K).decoders
++    aff = lambda j, b: np.min(E[dec[j], b])
++    core_priv = [1 + G + k for k in order]
++    grp = [j for j in pr if 1 <= j <= G]
++    other = [j for j in pr if j > G and j not in core_priv]
++    head = {groups[g][0]: 1 + g for g in range(G)}
++    return dict(order=order, groups=groups, G=G, pr=pr, aff=aff, core_priv=core_priv, grp=grp, other=other, head=head)
++
++
++def _build(lists, groups, p, core, pr, rule):
++    K, B, S = p['K'], p['B'], p['Smax']
++    sets = [l[:S] for l in lists]
++    served = sorted(set().union(*sets))
++    d = H_.Design(groups, served, K)
++    d.core = [k for k in core if (1 + d.G + k) in d.col]
++    d.priority = pr; d.rule = rule
++    if any(set(s) != set(served) for s in sets):
++        d.bsmask = np.array([[j in sets[b] for j in d.served] for b in range(B)])
++        d.bs_sets = [sorted(s) for s in sets]
++    return d
++
++
++def cluster(net, p, one_layer=False):
++    """Per BS: super-common; then the clusters (core user and its group) in decreasing affinity of the BS to the core
++    user, each with the core user's private stream followed by its group-common stream; then non-core privates."""
++    P = _parts(net, p, one_layer); G = P['G']
++    lists = []
++    for b in range(p['B']):
++        lst = [0]
++        for j in sorted(P['core_priv'], key=lambda j: -P['aff'](j, b)):
++            lst.append(j); k = j - 1 - G
++            if k in P['head']: lst.append(P['head'][k])
++        lst += sorted(P['other'], key=lambda j: -P['aff'](j, b))
++        lists.append(lst)
++    return _build(lists, P['groups'], p, P['order'], P['pr'], 'cluster')
++
++
++def cluster_1layer(net, p):
++    return cluster(net, p, one_layer=True)
++
++
++def coreonly(net, p, one_layer=False):
++    """Per BS: super-common, core privates, group-common streams (each tier in decreasing affinity); no private
++    streams of non-core UEs."""
++    P = _parts(net, p, one_layer)
++    lists = []
++    for b in range(p['B']):
++        lists.append([0] + sorted(P['core_priv'], key=lambda j: -P['aff'](j, b)) + sorted(P['grp'], key=lambda j: -P['aff'](j, b)))
++    return _build(lists, P['groups'], p, P['order'], P['pr'], 'coreonly')
++
++
++def coreonly_1layer(net, p):
++    return coreonly(net, p, one_layer=True)
++
++
++def dof_split(K, B, N, S, tie='large'):
++    """(n_p, s): the number of private streams and the number of BSs carrying each, maximizing the spatial DoF
++    n_p = min(K, sN, floor(B(S-1)/s)) (a stream on s BSs can be zero-forced at n_p - 1 users iff sN >= n_p; the
++    private streams use n_p s of the B(S-1) slots left by the super-common stream); ties: the larger s."""
++    sgn = 1 if tie == 'large' else -1
++    n_p, s = max(((min(K, s * N, B * (S - 1) // s), sgn * s) for s in range(1, B + 1)))
++    return n_p, sgn * s
++
++
++def dof(net, p, one_layer=False, tie='large', fill=False, core_rule='sus'):
++    K, B, N, S = p['K'], p['B'], p['N'], p['Smax']
++    Hd = net['Hd']
++    if core_rule == 'sus':
++        n_p, s = dof_split(K, B, N, S, tie)
++        core = H_.sus(Hd, n_p)
++    else:                                            # greedy ZF selection, then the DoF split of the selected users
++        sel = H_.zf_greedy(Hd, B * p['Pmax'])
++        n_p, s = dof_split(len(sel), B, N, S, tie)
++        core = sel[:n_p]
++    energy = np.sum(np.abs(Hd) ** 2, axis=1)
++    Hn = Hd / np.sqrt(energy)[:, None]
++    corr = np.abs(Hn @ Hn.conj().T) ** 2
++    follow = {c: [] for c in core}
++    for k in range(K):
++        if k not in core:
++            follow[core[int(np.argmax(corr[k, core]))]].append(k)
++    groups = [] if one_layer else [[c] + follow[c] for c in core if follow[c]]
++    G = len(groups)
++    E = bs_energy(net, p)
++    sets = [[0] for _ in range(B)]
++    for k in core:                                   # private streams: the s strongest BSs with a free slot
++        for b in [b for b in np.argsort(-E[k], kind='stable') if len(sets[b]) < S][:s]:
++            sets[b].append(1 + G + k)
++    gaff = {1 + g: E[groups[g]].min(0) for g in range(G)}
++    for b in range(B):                               # group-common streams: each BS fills its free slots
++        for j in sorted(gaff, key=lambda j: -gaff[j][b])[:S - len(sets[b])]:
++            sets[b].append(j)
++    others = sorted([k for k in range(K) if k not in core], key=lambda k: (-energy[k], k))
++    if fill:                                         # then private streams of the other UEs
++        for b in range(B):
++            for k in sorted(others, key=lambda k: -E[k, b])[:S - len(sets[b])]:
++                sets[b].append(1 + G + k)
++    pr = [0] + [1 + G + k for k in core] + sorted(gaff, key=lambda j: (-len(groups[j - 1]), j)) + [1 + G + k for k in others]
++    return _build(sets, groups, p, core, pr, 'dof')
++
++
++def dof_1layer(net, p):
++    return dof(net, p, one_layer=True)
++
++
++def dof_small(net, p):
++    return dof(net, p, tie='small')
++
++
++def dof_small_1layer(net, p):
++    return dof(net, p, one_layer=True, tie='small')
++
++
++def dof_fill(net, p):
++    return dof(net, p, fill=True)
++
++
++def dof_fill_1layer(net, p):
++    return dof(net, p, one_layer=True, fill=True)
++
++
++def dof_zf(net, p):
++    return dof(net, p, core_rule='zf')
++
++
++def dof_zf_1layer(net, p):
++    return dof(net, p, one_layer=True, core_rule='zf')
++
++
++def zf_layer(net, p):
++    """The private layer: greedy zero-forcing user selection [Dimic-Sidiropoulos] in which the private stream of every
++    selected UE is carried by its s strongest BSs that have a free fronthaul slot, for s = 1..B; the s whose selection
++    has the largest ZF sum rate is kept (ties: the larger s). ZF sum rate of a selection C with carriers A_k:
++    sum_k log2(1 + (P/|C|) / [(H_k H_k^H)^-1]_kk), H_k the channels of C on the antennas of A_k (P = B P_max, as in
++    hrs.zf_greedy; a stream whose BSs have fewer antennas than |C| cannot be zero-forced, so the selection stops there).
++    Returns (core users in selection order, carriers {k: [BSs]}, s)."""
++    K, B, N, S = p['K'], p['B'], p['N'], p['Smax']
++    Hd = net['Hd']; P = B * p['Pmax']
++    E = bs_energy(net, p)
++    order = [np.argsort(-E[k], kind='stable') for k in range(K)]
++
++    def rate(sel, car):
++        n = len(sel); r = 0.0
++        for i, k in enumerate(sel):
++            ant = np.concatenate([np.arange(b * N, (b + 1) * N) for b in car[k]])
++            if len(ant) < n: return -np.inf
++            Hk = Hd[sel][:, ant]
++            try:
++                g = 1.0 / max(np.real(np.linalg.inv(Hk @ Hk.conj().T)[i, i]), 1e-300)
++            except np.linalg.LinAlgError:
++                return -np.inf
++            r += np.log2(1 + P / n * g)
++        return r
++
++    best = None
++    for s in range(1, B + 1):
++        sel, car, load, cur = [], {}, np.zeros(B, int), 0.0
++        while True:
++            cand = None
++            for k in range(K):
++                if k in sel: continue
++                bs = [b for b in order[k] if load[b] < S - 1][:s]
++                if len(bs) < s: continue
++                r = rate(sel + [k], {**car, k: bs})
++                if r > cur + 1e-9 and (cand is None or r > cand[0]): cand = (r, k, bs)
++            if cand is None: break
++            cur, k, bs = cand; sel.append(k); car[k] = bs; load[bs] += 1
++        if best is None or cur >= best[0] - 1e-9:
++            best = (cur, sel, car, s)
++    return best[1], best[2], best[3]
++
++
++def zfs(net, p, one_layer=False):
++    """Discrete design ZS: private layer by zf_layer; every other UE joins the core user with the most correlated
++    direct channel (groups); each BS carries the super-common stream, the private streams assigned to it, and fills
++    its free slots with group-common streams in decreasing order of its direct-channel energy to the weakest member."""
++    K, B, S = p['K'], p['B'], p['Smax']
++    Hd = net['Hd']
++    core, car, s = zf_layer(net, p)
++    energy = np.sum(np.abs(Hd) ** 2, axis=1)
++    Hn = Hd / np.sqrt(energy)[:, None]
++    corr = np.abs(Hn @ Hn.conj().T) ** 2
++    follow = {c: [] for c in core}
++    for k in range(K):
++        if k not in core:
++            follow[core[int(np.argmax(corr[k, core]))]].append(k)
++    groups = [] if one_layer else [[c] + follow[c] for c in core if follow[c]]
++    G = len(groups)
++    E = bs_energy(net, p)
++    sets = [[0] for _ in range(B)]
++    for k in core:
++        for b in car[k]: sets[b].append(1 + G + k)
++    gaff = {1 + g: E[groups[g]].min(0) for g in range(G)}
++    for b in range(B):
++        for j in sorted(gaff, key=lambda j: -gaff[j][b])[:S - len(sets[b])]:
++            sets[b].append(j)
++    others = sorted([k for k in range(K) if k not in core], key=lambda k: (-energy[k], k))
++    pr = [0] + [1 + G + k for k in core] + sorted(gaff, key=lambda j: (-len(groups[j - 1]), j)) + [1 + G + k for k in others]
++    d = _build(sets, groups, p, core, pr, 'zfs')
++    d.dof = (len(core), s)
++    return d
++
++
++def zfs_1layer(net, p):
++    return zfs(net, p, one_layer=True)
++
++
++def zf_rate(Hd, sel, car, N, P):
++    """ZF sum rate of the private streams of the UEs sel, the stream of UE k precoded on the antennas of the BSs car[k]:
++    sum_k log2(1 + (P/|sel|) / [(H_k H_k^H)^-1]_kk), H_k the channels of sel on those antennas; -inf if some stream
++    cannot be zero-forced (its BSs have fewer antennas than |sel|)."""
++    n = len(sel); r = 0.0
++    for i, k in enumerate(sel):
++        ant = np.concatenate([np.arange(b * N, (b + 1) * N) for b in car[k]])
++        if len(ant) < n: return -np.inf
++        Hk = Hd[sel][:, ant]
++        try:
++            g = 1.0 / max(np.real(np.linalg.inv(Hk @ Hk.conj().T)[i, i]), 1e-300)
++        except np.linalg.LinAlgError:
++            return -np.inf
++        r += np.log2(1 + P / n * g)
++    return r
++
++
++def sus_zf(net, p, one_layer=False, regroup=False):
++    """Discrete design SZ.
++    Core users and groups as in the thesis: SUS order C on the stacked direct channels (|C| = min(K, BN)), every other
++    UE joins the core user with the most correlated direct channel, every core user with a follower heads a group.
++    Private layer: the private streams of the first n users of C, each carried by its s strongest BSs with a free slot
++    (S_max - 1 slots per BS besides the super-common stream); (n, s) maximize the ZF sum rate (zf_rate, P = B P_max)
++    over n = 1..|C| and s = 1..B (ties: the larger n, then the larger s).
++    Group layer: every BS fills its free slots with group-common streams in decreasing order of its direct-channel
++    energy to the weakest member. Super-common stream at every BS."""
++    K, B, N, S = p['K'], p['B'], p['N'], p['Smax']
++    Hd = net['Hd']; P = B * p['Pmax']
++    order, groups, energy, _ = H_.joint_structure(Hd, p, 'sus')
++    if one_layer: groups = []
++    G = len(groups)
++    E = bs_energy(net, p)
++    best = None
++    for s in range(1, B + 1):
++        load = np.zeros(B, int); car = {}
++        for n, k in enumerate(order, 1):
++            bs = [b for b in np.argsort(-E[k], kind='stable') if load[b] < S - 1][:s]
++            if len(bs) < s: break
++            car[k] = bs; load[bs] += 1
++            r = zf_rate(Hd, order[:n], car, N, P)
++            if best is None or r > best[0] + 1e-9 or (abs(r - best[0]) <= 1e-9 and (n, s) > (len(best[1]), best[3])):
++                best = (r, order[:n], dict(car), s)
++    _, core, car, s = best
++    if regroup and not one_layer:                    # groups around the private-layer users
++        Hn = Hd / np.sqrt(energy)[:, None]
++        corr = np.abs(Hn @ Hn.conj().T) ** 2
++        follow = {c: [] for c in core}
++        for k in range(K):
++            if k not in core:
++                follow[core[int(np.argmax(corr[k, core]))]].append(k)
++        groups = [[c] + follow[c] for c in core if follow[c]]
++        G = len(groups)
++    sets = [[0] for _ in range(B)]
++    for k in core:
++        for b in car[k]: sets[b].append(1 + G + k)
++    gaff = {1 + g: E[groups[g]].min(0) for g in range(G)}
++    for b in range(B):
++        for j in sorted(gaff, key=lambda j: -gaff[j][b])[:S - len(sets[b])]:
++            sets[b].append(j)
++    pr = H_.priority_list(order, groups, energy, K, 'private_first')
++    d = _build(sets, groups, p, core, pr, 'sus_zf')
++    d.dof = (len(core), s)
++    return d
++
++
++def sus_zf_1layer(net, p):
++    return sus_zf(net, p, one_layer=True)
++
++
++def sus_zf_regroup(net, p):
++    return sus_zf(net, p, regroup=True)
+diff -ruN -x __pycache__ harness/variants.py harness/variants.py
+--- harness/variants.py	2026-10-13 00:58:16.000000000 +0000
++++ harness/variants.py	2026-10-13 09:34:09.540864302 +0000
+@@ -14,9 +14,36 @@
+   J1   its 1-layer RSMA (group-common streams removed)          discrete.current_1layer
+   J    the thesis framework = JH or J1 by the stream-set test at the initial design of the search; derived by
+        tools/report.py from the runs of JH and J1 (not run separately)
++Design round v10 (DESIGN.md): SP / SP1 the final design and its 1-layer counterpart (code/layered.py); the other
++entries are the methods tried on the way (code/perbs.py).
+ """
+ 
+ VARIANTS = {
+     'JH': dict(design='discrete:current', one_layer='J1'),
+     'J1': dict(design='discrete:current_1layer'),
++    # ---- design round v10 -------------------------------------------------------------------------------------
++    # the final design (code/layered.py; DESIGN.md) and its 1-layer RSMA counterpart
++    'SP': dict(design='layered:design', one_layer='SP1'),
++    'SP1': dict(design='layered:design_1layer'),
++    # the other methods tried (code/perbs.py; DESIGN.md, "Other methods tried"), in the order they were tried
++    'TA': dict(design='perbs:tiered', one_layer='TA1'),               # per-BS filling by affinity, tier by tier
++    'TA1': dict(design='perbs:tiered_1layer'),
++    'TB': dict(design='perbs:cluster', one_layer='TB1'),              # per-BS clusters: core private + its group
++    'TB1': dict(design='perbs:cluster_1layer'),
++    'TC': dict(design='perbs:coreonly', one_layer='TC1'),             # TA without non-core privates (TC1 not run)
++    'TC1': dict(design='perbs:coreonly_1layer'),
++    'DF': dict(design='perbs:dof', one_layer='DF1'),                  # DoF private layer, groups in the free slots
++    'DF1': dict(design='perbs:dof_1layer'),
++    'DG': dict(design='perbs:dof_small', one_layer='DG1'),            # DF, DoF ties to fewer BSs (T2 b, d only)
++    'DG1': dict(design='perbs:dof_small_1layer'),
++    'DFm': dict(design='perbs:dof', one_layer='DF1m', opt=dict(init='core_mask')),   # DF, masked AO start (E3)
++    'DF1m': dict(design='perbs:dof_1layer', opt=dict(init='core_mask')),
++    'DFF': dict(design='perbs:dof_fill', one_layer='DFF1'),           # DF, then non-core privates in free slots
++    'DFF1': dict(design='perbs:dof_fill_1layer'),
++    'ZG': dict(design='perbs:dof_zf', one_layer='ZG1'),               # greedy ZF users, DoF split, groups on them
++    'ZG1': dict(design='perbs:dof_zf_1layer'),
++    'ZS': dict(design='perbs:zfs', one_layer='ZS1'),                  # ZG with s by the ZF rate (E3 only)
++    'ZS1': dict(design='perbs:zfs_1layer'),
++    'SZ': dict(design='perbs:sus_zf', one_layer='SZ1'),               # SP private layer, thesis groups (not run)
++    'SZ1': dict(design='perbs:sus_zf_1layer'),                        # = SP1 (identical designs)
+ }
+diff -ruN -x __pycache__ tools/large_network.py tools/large_network.py
+--- tools/large_network.py	1970-01-01 00:00:00.000000000 +0000
++++ tools/large_network.py	2026-10-13 09:56:03.343713679 +0000
+@@ -0,0 +1,54 @@
++"""Behaviour of a discrete design with many BSs scattered over a large area (design only; no AO, no search).
++
++    python3 tools/large_network.py MODULE:FUNCTION [--B 9] [--side 300] [--K 40] [--N 4] [--Smax 10] [--seed 1]
++
++BSs on a jittered square grid over a side x side area (height 15 m), K UEs uniform (height 1.5 m), the channel model
++of the thesis (hrs.make_network with explicit BS/UE positions). Prints the private-layer choice, how many BSs carry each
++core user's private stream, and per BS the streams it carries and its distance to the UEs it serves.
++"""
++import os, sys, argparse, importlib
++import numpy as np
++ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
++sys.path.insert(0, os.path.join(ROOT, 'code'))
++import hrs as H_, run as R, discrete as DC
++
++
++def main():
++    ap = argparse.ArgumentParser()
++    ap.add_argument('design'); ap.add_argument('--B', type=int, default=9); ap.add_argument('--side', type=float, default=300.0)
++    ap.add_argument('--K', type=int, default=40); ap.add_argument('--N', type=int, default=4); ap.add_argument('--Smax', type=int, default=10)
++    ap.add_argument('--seed', type=int, default=1)
++    a = ap.parse_args()
++    rng = np.random.default_rng(a.seed)
++    g = int(np.ceil(np.sqrt(a.B))); step = a.side / g
++    cells = [(i, j) for i in range(g) for j in range(g)][:a.B]
++    BS = [((i + 0.5 + 0.3 * rng.uniform(-1, 1)) * step, (j + 0.5 + 0.3 * rng.uniform(-1, 1)) * step, 15.0) for i, j in cells]
++    UE = [(x, y, 1.5) for x, y in rng.uniform(0, a.side, (a.K, 2))]
++    p = H_.params(K=a.K, L=3, N=a.N, M=100, Smax=a.Smax, Pmax=1.0, Dmax=10.0, Rth=1.0, bank=R.BANK, B=a.B)
++    bank = dict(R.BANK, bsSetups={'even': dict(R.BANK['bsSetups']['even'], UE={'K%d' % a.K: {'random': UE}})})
++    net = H_.make_network(p, bank, drop=1, kind='random', BS=BS, UE=UE)
++    mod, fn = a.design.split(':')
++    d = getattr(importlib.import_module(mod), fn)(net, p)
++    DC.check(d, p)
++    bm = np.ones((a.B, d.nS), bool) if d.bsmask is None else np.asarray(d.bsmask, bool)
++    dist = np.linalg.norm(np.asarray(net['UE'])[:, None, :2] - np.asarray(net['BS'])[None, :, :2], axis=2)
++    print(f'B = {a.B} BSs over {a.side:.0f} m x {a.side:.0f} m, K = {a.K}, N = {a.N}, S_max = {a.Smax}: '
++          f'{d.nS} distinct streams ({len(d.private_served)} private, {len(d.served_groups)} group-common), rule {d.rule}')
++    lay = getattr(d, 'layer', None) or (dict(n_private=d.dof[0], s=d.dof[1]) if hasattr(d, 'dof') else None)
++    if lay: print(f"private layer: {lay['n_private']} private streams, each carried by s = {lay['s']} of the {a.B} BSs")
++    ncar = [int(bm[:, d.col[1 + d.G + k]].sum()) for k in d.core]
++    rank = [int(sorted(range(a.B), key=lambda b: dist[k, b]).index(b)) for k in d.core
++            for b in np.flatnonzero(bm[:, d.col[1 + d.G + k]])]
++    print(f'core users: {len(d.core)}; BSs per core private stream: {np.bincount(ncar).tolist()} (count by number of BSs); '
++          f'distance rank of a carrying BS among the BSs of its UE: {np.bincount(rank, minlength=a.B).tolist()}')
++    for b in range(a.B):
++        js = [d.served[i] for i in np.flatnonzero(bm[b])]
++        ues = sorted({k for j in js if j > 0 for k in d.decoders[j]})
++        print(f'  BS {b} at ({BS[b][0]:5.0f},{BS[b][1]:5.0f}): {len(js)} streams '
++              f'({sum(1 <= j <= d.G for j in js)} group-common, {sum(j > d.G for j in js)} private), '
++              f'serves {len(ues)} UEs at median distance {np.median(dist[ues, b]) if ues else float("nan"):.0f} m '
++              f'(all UEs: {np.median(dist[:, b]):.0f} m)')
++
++
++if __name__ == '__main__':
++    main()
+diff -ruN -x __pycache__ tools/r1_pair.py tools/r1_pair.py
+--- tools/r1_pair.py	1970-01-01 00:00:00.000000000 +0000
++++ tools/r1_pair.py	2026-10-13 13:46:07.390363099 +0000
+@@ -0,0 +1,38 @@
++"""R1 on all Q = 50 grid runs common to a variant and its 1-layer counterpart only (no intersection with JH/J1; the
++same paired statistics as tools/report.py), per scenario and R_th, optionally per setting.
++
++    python3 tools/r1_pair.py X [--by-setting] [--drops 901,902,...]
++"""
++import os, sys, argparse
++import numpy as np
++ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
++sys.path.insert(0, os.path.join(ROOT, 'harness')); sys.path.insert(0, os.path.join(ROOT, 'tools'))
++import variants as V, report as RP
++
++
++def main():
++    ap = argparse.ArgumentParser(); ap.add_argument('variant'); ap.add_argument('--by-setting', action='store_true')
++    ap.add_argument('--drops', default=None); ap.add_argument('--budget', type=int, default=50)
++    a = ap.parse_args()
++    X = a.variant; X1 = V.VARIANTS[X]['one_layer']
++    dx, d1 = RP.load(X, a.budget), RP.load(X1, a.budget)
++    drops = None if a.drops is None else {int(x) for x in a.drops.split(',')}
++    for sc in RP.SCEN:
++        if sc not in dx or sc not in d1: continue
++        keys = [k for k in set(dx[sc]) & set(d1[sc]) if drops is None or k[1] in drops]
++        groups = [('all settings', keys)] + ([(f'setting {st}', [k for k in keys if k[0] == st]) for st in sorted({k[0] for k in keys})]
++                                             if a.by_setting else [])
++        print(f'\n===== scenario {sc}, Q = {a.budget}: {len(keys)} runs common to {X} and {X1}, drops {sorted({k[1] for k in keys})}')
++        for title, ks in groups:
++            print(f'-- {sc}, {title}')
++            print(f"{'R_th':>6} {'n':>4} {X:>9} {X1:>9} {X + '-' + X1:>17}   QoS met {X}/{X1}")
++            for R in sorted({k[2] for k in ks}) + ['all']:
++                kk = [k for k in ks if R == 'all' or k[2] == R]
++                m, e = RP.stats([dx[sc][k]['rate'] - d1[sc][k]['rate'] for k in kk])
++                print(f"{(f'{R:g}' if R != 'all' else 'all'):>6} {len(kk):>4} {np.mean([dx[sc][k]['rate'] for k in kk]):9.2f} "
++                      f"{np.mean([d1[sc][k]['rate'] for k in kk]):9.2f} {m:+8.2f}±{e:5.2f}   "
++                      f"{sum(dx[sc][k]['qos_met'] for k in kk)}/{sum(d1[sc][k]['qos_met'] for k in kk)}")
++
++
++if __name__ == '__main__':
++    main()
+diff -ruN -x __pycache__ tools/summary_tried.py tools/summary_tried.py
+--- tools/summary_tried.py	1970-01-01 00:00:00.000000000 +0000
++++ tools/summary_tried.py	2026-10-13 09:44:39.108416151 +0000
+@@ -0,0 +1,35 @@
++"""Compact Q = 5 screen summary of every variant tried (DESIGN.md, "Other methods tried"):
++per scenario and R_th, the mean rate of X, X - X1 (its 1-layer counterpart) and X - J (paired, mean +- SE),
++on the runs common to X, X1, JH and J1.
++
++    python3 tools/summary_tried.py X1,X2,... [--budget 5]
++"""
++import os, sys, json, argparse
++import numpy as np
++ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
++sys.path.insert(0, os.path.join(ROOT, 'harness')); sys.path.insert(0, os.path.join(ROOT, 'tools'))
++import variants as V, report as RP
++
++
++def main():
++    ap = argparse.ArgumentParser(); ap.add_argument('variants'); ap.add_argument('--budget', type=int, default=5)
++    a = ap.parse_args()
++    for X in a.variants.split(','):
++        X1 = V.VARIANTS[X].get('one_layer')
++        d = {n: RP.load(n, a.budget) for n in (X, X1, 'JH', 'J1')}
++        for sc in RP.SCEN:
++            if any(sc not in d[n] for n in d): continue
++            keys = set(d[X][sc]) & set(d[X1][sc]) & set(d['JH'][sc]) & set(d['J1'][sc])
++            if not keys: continue
++            row = []
++            for R in (0.0, 0.5, 1.0, 1.5, 2.0, 2.5):
++                ks = [k for k in keys if k[2] == R]
++                x = [d[X][sc][k]['rate'] for k in ks]
++                m1 = RP.stats([d[X][sc][k]['rate'] - d[X1][sc][k]['rate'] for k in ks])
++                mj = RP.stats([d[X][sc][k]['rate'] - RP.derive_j(d['JH'][sc][k], d['J1'][sc][k])['rate'] for k in ks])
++                row.append(f'{np.mean(x):6.1f} {m1[0]:+5.2f}±{m1[1]:4.2f} {mj[0]:+6.2f}')
++            print(f'{X:>4} {sc} n={len(keys):3d} | ' + ' | '.join(row))
++
++
++if __name__ == '__main__':
++    main()

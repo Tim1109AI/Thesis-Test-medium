@@ -1,0 +1,7 @@
+B = 4 BSs over 100 m x 100 m, K = 12, N = 3, S_max = 12: 13 distinct streams (10 private, 2 group-common), rule layered
+private layer: 10 private streams, each carried by s = 4 of the 4 BSs
+core users: 10; BSs per core private stream: [0, 0, 0, 0, 10] (count by number of BSs); distance rank of a carrying BS among the BSs of its UE: [10, 10, 10, 10]
+  BS 0 at (   25,   39): 12 streams (1 group-common, 10 private), serves 11 UEs at median distance 46 m (all UEs: 44 m)
+  BS 1 at (   14,   88): 12 streams (1 group-common, 10 private), serves 11 UEs at median distance 63 m (all UEs: 66 m)
+  BS 2 at (   69,   23): 12 streams (1 group-common, 10 private), serves 11 UEs at median distance 49 m (all UEs: 47 m)
+  BS 3 at (   85,   72): 12 streams (1 group-common, 10 private), serves 11 UEs at median distance 54 m (all UEs: 57 m)

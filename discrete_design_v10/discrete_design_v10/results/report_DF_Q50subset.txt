@@ -1,0 +1,20 @@
+
+===== scenario T2, Q = 50: 12 common runs (DF: 12, DF1: 12)
+-- T2, all settings
+   R_th    n        DF       DF1            DF-DF1   QoS met DF/DF1
+      1    6    128.31    126.74    +1.57± 1.41      6/6
+      2    6    101.44    101.23    +0.21± 0.38      6/6
+    all   12    114.87    113.98    +0.89± 0.73      12/12
+-- DF: mean served streams 10.17, group-common served 1.17, private served 8.00; BS-specific in 0/12 runs; per run, carried by a subset of the BSs: group-common 0.00, private 0.00
+-- CPU per run (s): DF 43.7, DF1 37.9; DF discrete design 0.001
+
+===== scenario E3, Q = 50: 12 common runs (DF: 12, DF1: 12)
+-- E3, all settings
+   R_th    n        DF       DF1            DF-DF1   QoS met DF/DF1
+      1    6    136.59    137.35    -0.76± 1.15      6/6
+      2    6    125.61    116.40    +9.21± 5.04      6/6
+    all   12    131.10    126.88    +4.22± 2.89      12/12
+-- DF: mean served streams 13.67, group-common served 2.33, private served 10.33; BS-specific in 8/12 runs; per run, carried by a subset of the BSs: group-common 2.00, private 5.33
+-- CPU per run (s): DF 251.5, DF1 125.9; DF discrete design 0.001
+
+written /home/user/Thesis-Test-medium/discrete_design_v10/discrete_design_v10/results/DF__report.json

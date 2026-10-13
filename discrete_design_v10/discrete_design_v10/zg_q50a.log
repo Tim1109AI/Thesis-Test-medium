@@ -1,0 +1,15 @@
+ZG__T2: 6 runs to do (0 done) -> /home/user/Thesis-Test-medium/discrete_design_v10/discrete_design_v10/results/ZG__T2.jsonl
+ZG__E3: 6 runs to do (0 done) -> /home/user/Thesis-Test-medium/discrete_design_v10/discrete_design_v10/results/ZG__E3.jsonl
+  [1/12] T2 a drop 901 R_th 1: rate 92.30, 8 streams  (18 CPU-s, 20 s elapsed)
+  [2/12] T2 e drop 901 R_th 1: rate 152.12, 11 streams BS-specific  (95 CPU-s, 116 s elapsed)
+  [3/12] T2 f drop 901 R_th 1: rate 154.62, 15 streams  (66 CPU-s, 183 s elapsed)
+  [4/12] E3 a drop 901 R_th 1: rate 139.38, 9 streams  (17 CPU-s, 200 s elapsed)
+  [5/12] E3 e drop 901 R_th 1: rate 132.94, 15 streams BS-specific  (518 CPU-s, 721 s elapsed)
+  [6/12] E3 f drop 901 R_th 1: rate 182.07, 15 streams  (190 CPU-s, 913 s elapsed)
+  [7/12] T2 a drop 902 R_th 1: rate 95.81, 7 streams  (22 CPU-s, 934 s elapsed)
+  [8/12] T2 e drop 902 R_th 1: rate 150.15, 10 streams  (75 CPU-s, 1010 s elapsed)
+  [9/12] T2 f drop 902 R_th 1: rate 139.38, 11 streams  (95 CPU-s, 1105 s elapsed)
+  [10/12] E3 a drop 902 R_th 1: rate 131.54, 8 streams  (24 CPU-s, 1129 s elapsed)
+  [11/12] E3 e drop 902 R_th 1: rate 145.20, 15 streams BS-specific  (377 CPU-s, 1509 s elapsed)
+/usr/lib/python3.13/multiprocessing/resource_tracker.py:479: UserWarning: resource_tracker: There appear to be 6 leaked semaphore objects to clean up at shutdown: {'/mp-09baw8bd', '/mp-sh0_13bq', '/mp-nek896m_', '/mp-fzrem533', '/mp-e42vmogk', '/mp-a7gho5x_'}
+  warnings.warn(
